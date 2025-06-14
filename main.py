@@ -105,64 +105,123 @@ def calculate_centroids_and_fluxes(image_array, threshold_value):
 
 
 def main():
-    image_path = "data/sky-6781706_1280.jpg"
-    image_data = load_grayscale_image(image_path)
-    estimate_background_and_noise(image_data)
-    plt.style.use('dark_background')
+    video = cv.VideoCapture("data/205427-926957416_small.mp4")
+    if (video.isOpened() == False):
+        print("Error opening video stream or file")
+        sys.exit(1)  # Exit if video cannot be opened
+    cv.namedWindow('StarFinder', cv.WINDOW_NORMAL)
 
-    background, noise = estimate_background_and_noise(image_data)
-    print(f"Estimated Background Median: {background:.2f}")
-    print(f"Estimated Noise Standard Deviation: {noise:.2f}")
+    # Read the entire file until it is completed
+    while (True):
+        # Capture each frame
+        ret, frame = video.read()
+        #image_data = load_grayscale_image(frame)
+        gray_frame = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+        gray_frame_float = gray_frame.astype(np.float32)
 
-    # Define a threshold multiplier for initial star detection
-    # This value might need tuning based on your specific images!
-    # For robust centroiding, you often use a lower threshold than for simple peak detection.
-    # Experiment with 3 to 10 times the noise.
-    centroid_threshold_multiplier = 50
-    initial_detection_threshold = background + centroid_threshold_multiplier * noise
-    print(f"Using centroiding threshold: {initial_detection_threshold:.2f}")
+        background, noise = estimate_background_and_noise(gray_frame_float)
+        print(f"Estimated Background Median: {background:.2f}")
+        print(f"Estimated Noise Standard Deviation: {noise:.2f}")
+        # --- New: Local Background Estimation using Median Filter ---
+        # Kernel size: Must be large enough to completely "swallow" stars, but odd.
+        # Experiment with values like 25, 51, 75, 101, 151. Larger for larger/fainter objects.
+        kernel_size = 61  # Example: Must be an odd number!
 
-    # Call the new centroiding function
-    detected_stars = calculate_centroids_and_fluxes(image_data, initial_detection_threshold)
-    print(f"Detected {len(detected_stars)} stars with centroiding.")
+        # Apply the median filter to estimate the background
+        background_map_uint8 = cv.medianBlur(gray_frame, kernel_size)
 
-    # Optional: Filter out very small blobs that might be noise
-    # For example, only keep stars with at least 2 pixels or a minimum flux
-    min_area = 2
-    min_flux_for_display = background + 10 * noise  # Example: only show stars significantly above background
-    filtered_stars = [
-        s for s in detected_stars
-        if s['area_pixels'] >= min_area and s['flux'] >= min_flux_for_display
-    ]
-    print(f"Filtered down to {len(filtered_stars)} stars for display after min_area={min_area} and min_flux={min_flux_for_display:.2f}.")
+        # --- Convert both original and background map to float for accurate subtraction ---
+        gray_frame_float = gray_frame.astype(np.float32)
+        background_map_float = background_map_uint8.astype(np.float32)
 
+        # Subtract the background map from the original grayscale image
+        background_subtracted_frame_float = gray_frame_float - background_map_float
+
+        print(f"Subtracted Frame Min: {np.min(background_subtracted_frame_float):.2f}")
+        print(f"Subtracted Frame Max: {np.max(background_subtracted_frame_float):.2f}")
 
 
 
-    # Visualization
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image_data, cmap='gray', origin='lower',
-               vmin=np.percentile(image_data, 1),  # Good for setting lower display limit
-               vmax=np.percentile(image_data, 99.5))  # Good for setting upper display limit
-    # You can also use background and noise for vmin/vmax like:
-    # vmin=background - 2 * noise,
-    # vmax=background + 10 * noise)
+        # Now, estimate background and noise on the *flattened* image
+        background, noise = estimate_background_and_noise(background_subtracted_frame_float)
 
-    star_x_coords = [s['x_pixel'] for s in filtered_stars]
-    star_y_coords = [s['y_pixel'] for s in filtered_stars]
 
-    plt.scatter(star_x_coords, star_y_coords,
-                marker='+', s=30, color='lime', alpha=0.7, linewidth=0.5, label='Star Centroids')
+        # You might find the 'background' value is now very close to 0, which is good.
+        print(f"Estimated Flattened Background Median: {background:.2f}")
+        print(f"Estimated Flattened Noise Standard Deviation: {noise:.2f}")
 
-    plt.title("Detected Star Centroids (Centroiding)")
-    plt.colorbar(label='Pixel Intensity')
-    plt.legend()
-    plt.show()
+        # --- IMPORTANT FIX: Handle cases where noise_flat might be zero ---
+        # If mad_std returns 0.0, it means there's no variation detected, which is usually wrong for real images.
+        # Provide a small fallback value for noise if it's computed as zero.
+        # A typical 'noise' level in an 8-bit image after flattening might be around 1.0 to 5.0
+        min_noise_floor = 1.0  # Minimum assumed noise if mad_std returns 0
+        effective_noise_flat = max(noise, min_noise_floor)
 
-    print("\nTop 10 Brightest Stars:")
-    for i, star in enumerate(filtered_stars[:10]):
-        print(f"Star {i + 1}: X={star['x_pixel']:.2f}, Y={star['y_pixel']:.2f}, "
-              f"Flux={star['flux']:.2f}, Peak={star['peak_value']:.2f}, Area={star['area_pixels']}")
+
+        centroid_threshold_multiplier = 5  # Start with a lower multiplier here!
+        initial_detection_threshold = max(1.0, centroid_threshold_multiplier * effective_noise_flat)
+        print(f"Using centroiding threshold: {initial_detection_threshold:.2f}")
+
+        # Pass the background-subtracted frame to your detection function
+        detected_stars = calculate_centroids_and_fluxes(background_subtracted_frame_float, initial_detection_threshold)
+
+        # ... (rest of your filtering and visualization code remains largely the same)
+        # Make sure to draw on your original 'frame' or 'display_frame' for visualization,
+        # not on background_subtracted_frame unless you intend to show the processed image.
+
+
+
+
+        # Call the new centroiding function
+
+        print(f"Detected {len(detected_stars)} stars with centroiding.")
+
+        # Optional: Filter out very small blobs that might be noise
+        # For example, only keep stars with at least 2 pixels or a minimum flux
+        min_area = 2
+        min_flux_for_display = background + 50 * noise
+        filtered_stars = [
+            s for s in detected_stars
+            if s['area_pixels'] >= min_area and s['flux'] >= min_flux_for_display
+        ]
+
+        print(
+            f"Filtered down to {len(filtered_stars)} stars for display after min_area={min_area} and min_flux={min_flux_for_display:.2f}.")
+
+        #--- OPTIONAL: Visualize the background-subtracted frame (helpful for debugging) ---
+        min_val = np.min(background_subtracted_frame_float)
+        max_val = np.max(background_subtracted_frame_float)
+        if max_val - min_val > 0:
+            normalized_subtracted = ((background_subtracted_frame_float - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+            cv.imshow('Background Subtracted (Normalized)', normalized_subtracted)
+
+        else:
+            cv.imshow('Background Subtracted (Normalized)', np.zeros_like(gray_frame, dtype=np.uint8))
+
+        display_frame = frame.copy()  # Make a copy to draw on, leave original 'frame' untouched if needed
+
+        for star in filtered_stars:
+            center_x = int(round(star['x_pixel']))
+            center_y = int(round(star['y_pixel']))
+            # Draw a circle around the star
+            cv.circle(display_frame, (center_x, center_y), radius=2, color=(0, 100, 0), thickness=1)  # Green circle
+            # Optionally put text
+            # cv.putText(display_frame, f"F:{star['flux']:.0f}", (center_x + 10, center_y - 10),
+            #            cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
+
+        cv.imshow('StarFinder', display_frame)
+
+        # Press 'q' to quit the video playback
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
+
+
+
+        # Release the video capture object and close all OpenCV windows
+    video.release()
+    cv.destroyAllWindows()
+
 
 
 if __name__ == "__main__":
