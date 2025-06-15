@@ -105,7 +105,13 @@ def calculate_centroids_and_fluxes(image_array, threshold_value):
 
 
 def main():
-    video = cv.VideoCapture("data/205427-926957416_small.mp4")
+    video = cv.VideoCapture(0) #if using a video just put "[insert video location]" instead of 0
+    frame_width = int(video.get(cv.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(video.get(cv.CAP_PROP_FRAME_HEIGHT))
+    # Define the codec and create VideoWriter object
+    fourcc = cv.VideoWriter_fourcc(*'mp4v')
+    out = cv.VideoWriter('output.mp4', fourcc, 20.0, (frame_width, frame_height))
+
     if (video.isOpened() == False):
         print("Error opening video stream or file")
         sys.exit(1)  # Exit if video cannot be opened
@@ -115,6 +121,8 @@ def main():
     while (True):
         # Capture each frame
         ret, frame = video.read()
+        # Write the frame to the output file
+        out.write(frame)
         #image_data = load_grayscale_image(frame)
         gray_frame = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
         gray_frame_float = gray_frame.astype(np.float32)
